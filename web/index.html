@@ -15,17 +15,45 @@
     .status { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
     .status.failed { color: var(--danger); }
     .status.started { color: var(--success); }
-    /* the form: a label over each field, full width; paddock's own label is a row and its dialog 360 px */
-    #edit { width: min(560px, calc(100vw - 32px)); }
-    #form { display: flex; flex-direction: column; align-items: stretch; gap: 14px; }
+    /* the dialog, after Orca's: a name and the prompt at left, the settings in a column at right; paddock's dialog is
+       a 360 px card and its label a row, so both are redone here */
+    #edit { width: min(1000px, calc(100vw - 32px)); height: min(780px, calc(100vh - 32px)); max-width: none; max-height: none; padding: 0; overflow: hidden; }
+    #edit[open] { display: flex; }
+    #form { flex: 1; min-width: 0; margin: 0; display: flex; flex-direction: column; align-items: stretch; gap: 0; }
+    #form > header, #form > footer { display: flex; align-items: center; gap: 8px; padding: 12px 16px 12px 20px; margin: 0; }
+    #form > header { border-bottom: 1px solid var(--border); }
+    #form > header h2 { flex: 1; margin: 0; font-size: 14px; font-weight: 500; }
+    #form > footer { border-top: 1px solid var(--border); }
+    #form > footer .hint { flex: 1; display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; color: var(--text-muted); }
+    .panes { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 320px; }
+    .main { display: flex; flex-direction: column; gap: 6px; padding: 24px 28px; overflow: auto; }
+    .side { display: flex; flex-direction: column; gap: 16px; padding: 20px; border-left: 1px solid var(--border); overflow: auto; }
+    input.title { height: auto; margin-bottom: 18px; padding: 0; border: 0; background: none; font-size: 26px; font-weight: 600; color: var(--text); }
+    input.title:focus { box-shadow: none; }
     .field { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 0; }
-    .field > span { font-size: 12px; font-weight: 500; color: var(--text-muted); }
-    .field > small { font-size: 12px; color: var(--text-faint); }
-    .field > input, .field > select, .field > textarea { width: 100%; box-sizing: border-box; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .days { display: flex; flex-wrap: wrap; gap: 8px 16px; }
-    textarea[name=prompt] { min-height: 96px; }
-    input[name=precheck], input[name=cron] { font-family: var(--mono); font-size: 12px; }
+    .field > span, .caps { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+    .field > em { font-size: 12px; font-style: normal; color: var(--text-muted); }
+    .field > small, .main > small { font-size: 12px; color: var(--text-faint); }
+    .field input:not([type=checkbox], [type=radio]), .field select, .field textarea { width: 100%; }
+    .prompt { flex: 1; min-height: 180px; }
+    .prompt textarea { flex: 1; min-height: 160px; padding: 12px 14px; resize: none; line-height: 1.6; }
+    .labelrow { display: flex; align-items: center; gap: 8px; }
+    .labelrow > :first-child { flex: 1; }
+    .labelrow select { width: auto; height: 24px; font-size: 12px; }
+    textarea[name=precheck], input[name=cron] { font-family: var(--mono); font-size: 12px; }
+    /* a segmented control from two radios */
+    .segments { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; padding: 2px; border-radius: 9px; background: var(--hover); }
+    .segments label { justify-content: center; height: 26px; border-radius: 7px; color: var(--text-muted); font-weight: 500; }
+    .segments label:has(:checked) { background: var(--dialog); color: var(--text); box-shadow: 0 0 0 1px var(--border); }
+    .segments label:has(:focus-visible) { outline: 2px solid var(--focus); outline-offset: 1px; }
+    .segments input { position: absolute; opacity: 0; pointer-events: none; }
+    .days { display: grid; grid-template-columns: repeat(4, auto); justify-content: start; gap: 6px 14px; }
+    .on { display: flex; justify-content: space-between; font-weight: 500; }
+    @media (max-width: 720px) {
+      .panes { display: block; overflow: auto; }
+      .main, .side { overflow: visible; }
+      .side { border-left: 0; border-top: 1px solid var(--border); }
+    }
     [hidden] { display: none !important; }
     #runs table { width: 100%; }
     #runs td { vertical-align: top; font-size: 12px; }
@@ -53,47 +81,70 @@
   </section>
 </main>
 
-<dialog id="edit">
-  <h2 id="edit-title">New automation</h2>
-  <form id="form" method="dialog">
-    <input type="hidden" name="id">
-    <label class="field"><span>Name</span><input name="name" required autocomplete="off" placeholder="Review open PRs"></label>
-    <label class="field"><span>Prompt</span>
-      <textarea name="prompt" rows="4" required placeholder="Review the pull requests that ask for my review and leave comments."></textarea>
-      <small>The agent's first message.</small></label>
-    <label class="field"><span>Folder or repository</span><input name="dir" required autocomplete="off" placeholder="~/Developer/project"></label>
-    <label><input type="checkbox" role="switch" name="worktree"> A new worktree per run</label>
-    <label class="field" id="base-field"><span>From branch</span><input name="base" autocomplete="off" placeholder="the folder's current branch"></label>
-    <div class="grid">
-      <label class="field"><span>Agent</span><select name="agent"><option value="">Claude Code</option><option value="codex">Codex</option></select></label>
-      <label class="field"><span>Backend</span><select name="backend"><option value="" id="backend-default">Shepherd's</option><option value="herdr">herdr</option><option value="rex">Rex</option><option value="hc">hc</option><option value="tmux">tmux</option></select></label>
+<dialog id="edit" aria-labelledby="edit-title">
+  <form id="form">
+    <header>
+      <h2 id="edit-title">Create automation</h2>
+      <button type="button" class="quiet icon" id="close" title="Close" aria-label="Close"><p-icon name="close"></p-icon></button>
+    </header>
+    <div class="panes">
+      <div class="main">
+        <input type="hidden" name="id">
+        <input class="title" name="name" required autocomplete="off" placeholder="Weekday repo audit" aria-label="Name">
+        <label class="field prompt"><span>Prompt</span>
+          <textarea name="prompt" required placeholder="Run the weekly dependency audit and summarize risky changes."></textarea></label>
+        <small>The agent's first message: skills, file paths and slash commands work as they do when you type them.</small>
+      </div>
+      <div class="side">
+        <select name="agent" aria-label="Agent"><option value="">Claude Code</option><option value="codex">Codex</option></select>
+        <label class="field"><span>Backend</span>
+          <select name="backend"><option value="" id="backend-default">Shepherd's</option><option value="herdr">herdr</option><option value="rex">Rex</option><option value="hc">hc</option><option value="tmux">tmux</option></select>
+          <small>Where its terminal opens.</small></label>
+        <label class="field"><span>Project</span><input name="dir" required autocomplete="off" placeholder="~/Developer/project"></label>
+        <div class="field" role="group" aria-labelledby="ws-label"><span id="ws-label">Workspace</span>
+          <div class="segments">
+            <label><input type="radio" name="workspace" value="worktree" checked> Worktree</label>
+            <label><input type="radio" name="workspace" value="folder"> Folder</label>
+          </div>
+          <input name="base" autocomplete="off" placeholder="Base branch: the folder's current" aria-label="Base branch" data-worktree>
+          <small id="ws-hint"></small>
+        </div>
+        <div class="field"><label class="caps" for="preset">Schedule</label>
+          <select name="preset" id="preset">
+            <option value="everyday">Every day</option>
+            <option value="weekdays">Weekdays</option>
+            <option value="custom">Custom days</option>
+            <option value="interval">Every N minutes</option>
+            <option value="cron">Cron</option>
+            <option value="once">Once</option>
+          </select>
+          <div class="days" data-preset="custom" role="group" aria-label="Days"></div>
+          <small data-preset="custom">None checked: every day.</small>
+          <label class="field" data-preset="everyday weekdays custom"><em>Time</em><input type="time" name="at" value="09:00"></label>
+          <label class="field" data-preset="interval"><em>Every, in minutes</em><input type="number" name="every" min="1" value="60"></label>
+          <label class="field" data-preset="cron"><em>Minute hour day month weekday</em><input name="cron" placeholder="0 9 * * 1-5" autocomplete="off"></label>
+          <label class="field" data-preset="once"><em>At</em><input type="datetime-local" name="run_at"></label>
+        </div>
+        <label class="field"><span>Grace</span>
+          <select name="grace"><option value="10">10 min</option><option value="60">1 hour</option><option value="720">12 hours</option><option value="1440">24 hours</option></select>
+          <small>How late a run the machine slept through may still start.</small></label>
+        <div class="field">
+          <div class="labelrow"><label class="caps" for="precheck">Precheck</label>
+            <label class="caps" for="timeout">Timeout</label>
+            <select name="timeout" id="timeout"><option value="30">30 s</option><option value="60" selected>1 min</option><option value="300">5 min</option></select></div>
+          <textarea name="precheck" id="precheck" rows="3" spellcheck="false" placeholder="gh pr list --search review-requested:@me | grep -q ."></textarea>
+          <small>Runs in the folder first: exit 0 runs the automation, anything else skips it. Optional.</small>
+        </div>
+        <label class="on">On <input type="checkbox" role="switch" name="enabled" checked></label>
+      </div>
     </div>
-    <div class="grid">
-      <label class="field"><span>When</span>
-        <select name="kind">
-          <option value="daily">Daily at a time</option>
-          <option value="interval">Every N minutes</option>
-          <option value="cron">Cron</option>
-          <option value="once">Once</option>
-        </select>
-      </label>
-      <label class="field" data-kind="daily"><span>At</span><input type="time" name="at" value="09:00"></label>
-      <label class="field" data-kind="interval"><span>Every, in minutes</span><input type="number" name="every" min="1" value="60"></label>
-      <label class="field" data-kind="cron"><span>Minute hour day month weekday</span><input name="cron" placeholder="0 9 * * 1-5" autocomplete="off"></label>
-      <label class="field" data-kind="once"><span>At</span><input type="datetime-local" name="run_at"></label>
-    </div>
-    <div class="field" data-kind="daily"><div class="days"></div><small>None checked: every day.</small></div>
-    <label class="field"><span>Precheck</span>
-      <input name="precheck" autocomplete="off" placeholder="gh pr list --search review-requested:@me | grep -q .">
-      <small>A shell command run in the folder before each scheduled run: exit 0 runs it, anything else skips it. Optional.</small></label>
-    <label><input type="checkbox" role="switch" name="enabled" checked> On</label>
+    <footer>
+      <p class="hint"><p-icon name="stars-minimalistic"></p-icon> Once saved, it runs on its schedule until turned off.</p>
+      <button type="button" class="danger" id="delete" hidden>Delete</button>
+      <button type="button" class="secondary" id="cancel">Cancel</button>
+      <button type="submit" id="save">Create</button>
+    </footer>
   </form>
-  <footer>
-    <button class="danger" id="delete" hidden>Delete</button>
-    <span style="flex: 1"></span>
-    <button class="secondary" onclick="this.closest('dialog').close()">Cancel</button>
-    <button id="save">Save</button>
-  </footer>
 </dialog>
 
 <script type="module">
@@ -176,51 +227,72 @@
   const dayBoxes = $('.days', form);
   // Monday first; the values stay 0 (Sunday) to 6
   [1, 2, 3, 4, 5, 6, 0].forEach((n) => dayBoxes.append(el('label', {}, el('input', { type: 'checkbox', value: n }), days[n])));
-  const showKind = () => form.querySelectorAll('[data-kind]').forEach((e) => e.hidden = e.dataset.kind !== F.kind.value);
-  F.kind.onchange = showKind;
-  const showBase = () => $('#base-field').hidden = !F.worktree.checked;
-  F.worktree.onchange = showBase;
+  // the presets are views of the stored kinds: every day, weekdays and custom days are all daily
+  const show = () => {
+    form.querySelectorAll('[data-preset]').forEach((e) => e.hidden = !e.dataset.preset.split(' ').includes(F.preset.value));
+    const worktree = F.workspace.value === 'worktree';
+    F.base.hidden = !worktree;
+    $('#ws-hint').textContent = worktree ? `A new worktree each run, branched from ${F.base.value.trim() || "the folder's current branch"}.` : 'Each run in the project folder itself.';
+  };
+  form.addEventListener('change', show);
+  F.base.oninput = show;
+  // a value set elsewhere (the CLI) that the list lacks gets an option of its own
+  const pick = (select, v, label) => {
+    if (![...select.options].some((o) => o.value === String(v))) select.append(el('option', { value: v }, label));
+    select.value = v;
+  };
 
   function open(a) {
     form.reset();
-    $('#edit-title').textContent = a ? 'Edit automation' : 'New automation';
+    $('#edit-title').textContent = a ? 'Edit automation' : 'Create automation';
+    $('#save').textContent = a ? 'Save' : 'Create';
     $('#delete').hidden = !a;
+    F.id.value = '';
     if (a) {
       for (const k of ['id', 'name', 'prompt', 'dir', 'base', 'agent', 'backend', 'precheck']) F[k].value = a[k] ?? '';
-      F.worktree.checked = a.worktree;
+      F.workspace.value = a.worktree ? 'worktree' : 'folder';
       F.enabled.checked = a.enabled;
+      pick(F.grace, a.grace || 10, `${a.grace} min`);
+      pick(F.timeout, a.timeout || 60, `${a.timeout} s`);
       const s = a.schedule;
-      F.kind.value = s.kind;
+      const set = [...new Set(s.weekdays ?? [])].sort().join('');
+      F.preset.value = s.kind !== 'daily' ? s.kind : set === '' || set === '0123456' ? 'everyday' : set === '12345' ? 'weekdays' : 'custom';
       if (s.at) F.at.value = s.at;
       if (s.every) F.every.value = s.every;
       if (s.cron) F.cron.value = s.cron;
       if (s.run_at) { const t = new Date(s.run_at); F.run_at.value = new Date(t - t.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
       dayBoxes.querySelectorAll('input').forEach((b) => b.checked = (s.weekdays ?? []).includes(+b.value));
-    } else {
-      F.id.value = '';
     }
-    showKind();
-    showBase();
+    show();
     $('#edit').showModal();
+    $('.main').scrollTop = $('.side').scrollTop = 0;
   }
 
   $('#new').onclick = () => open(null);
-  $('#save').onclick = async () => {
-    if (!form.reportValidity()) return;
+  $('#close').onclick = $('#cancel').onclick = () => $('#edit').close();
+  form.onsubmit = async (e) => {
+    e.preventDefault();
     const f = F;
+    const preset = f.preset.value;
     const input = {
-      id: f.id.value, name: f.name.value, prompt: f.prompt.value, dir: f.dir.value, worktree: f.worktree.checked,
+      id: f.id.value, name: f.name.value, prompt: f.prompt.value, dir: f.dir.value, worktree: f.workspace.value === 'worktree',
       base: f.base.value, agent: f.agent.value, backend: f.backend.value, precheck: f.precheck.value, disabled: !f.enabled.checked,
-      kind: f.kind.value,
+      grace: +f.grace.value, timeout: +f.timeout.value,
+      kind: ['interval', 'cron', 'once'].includes(preset) ? preset : 'daily',
     };
-    if (input.kind === 'daily') { input.at = f.at.value; input.days = [...dayBoxes.querySelectorAll('input:checked')].map((b) => b.value); }
+    if (input.kind === 'daily') {
+      input.at = f.at.value;
+      input.days = preset === 'weekdays' ? ['1-5'] : preset === 'custom' ? [...dayBoxes.querySelectorAll('input:checked')].map((b) => b.value) : [];
+    }
     if (input.kind === 'interval') input.every = +f.every.value;
     if (input.kind === 'cron') input.cron = f.cron.value;
     if (input.kind === 'once') input.run_at = f.run_at.value.replace('T', ' ');
+    $('#save').setAttribute('aria-busy', 'true');
     try {
       await call('save', input);
       $('#edit').close();
-    } catch (e) { fail(e); }
+    } catch (err) { fail(err); }
+    $('#save').removeAttribute('aria-busy');
   };
   $('#delete').onclick = async () => {
     const id = F.id.value;

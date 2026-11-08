@@ -31,8 +31,11 @@ type Automation struct {
 	Enabled  bool     `json:"enabled"`
 	Schedule Schedule `json:"schedule"`
 	// Precheck is a shell command run in Dir before a scheduled run: exit 0 runs it, anything else skips it.
-	Precheck string    `json:"precheck,omitempty"`
-	Timeout  int       `json:"timeout,omitempty"` // the precheck's, in seconds
+	Precheck string `json:"precheck,omitempty"`
+	Timeout  int    `json:"timeout,omitempty"` // the precheck's, in seconds
+	// Grace is how many minutes late a scheduled run may still start: later than that, it is recorded as missed and
+	// the next is planned, so a laptop opened in the morning doesn't fire every run of the night. 0: 10.
+	Grace    int       `json:"grace,omitempty"`
 	Dir      string    `json:"dir"`
 	Worktree bool      `json:"worktree"`          // a new worktree per run, branched from Base
 	Base     string    `json:"base,omitempty"`    // empty: Dir's current branch
@@ -75,9 +78,14 @@ type Run struct {
 	Error      string    `json:"error,omitempty"`
 }
 
-// grace is how late a scheduled run may still start: later than that, it is recorded as missed and the next is
-// planned, so a laptop opened in the morning doesn't fire every run of the night.
-const grace = 10 * time.Minute
+// missed says a due run is later than its grace allows.
+func (a Automation) missed(now time.Time) bool {
+	grace := a.Grace
+	if grace <= 0 {
+		grace = 10
+	}
+	return now.Sub(a.NextRun) > time.Duration(grace)*time.Minute
+}
 
 // keepRuns bounds each automation's history.
 const keepRuns = 100
@@ -170,6 +178,7 @@ type saveInput struct {
 	Cron     string   `json:"cron" help:"cron: minute hour day month weekday"`
 	Precheck string   `json:"precheck" help:"a shell command run before a scheduled run; exit 0 runs it"`
 	Timeout  int      `json:"timeout" help:"the precheck's time limit in seconds (default 60)"`
+	Grace    int      `json:"grace" help:"how many minutes late a missed run may still start (default 10)"`
 	Disabled bool     `json:"disabled" help:"save it turned off"`
 }
 
@@ -235,7 +244,7 @@ func schedule(s *store, app *paddock.App) {
 				continue
 			}
 			due := a.NextRun
-			if now.Sub(due) > grace {
+			if a.missed(now) {
 				s.update(a.ID, func(a *Automation) { a.NextRun = a.Schedule.Next(now) })
 				s.record(Run{ID: id(), Automation: a.ID, Trigger: "scheduled", Status: "skipped_missed", At: now, Due: due})
 			} else if ok, out := precheck(a); !ok {
@@ -379,11 +388,14 @@ func (s *store) save(in saveInput, now time.Time) (Automation, error) {
 	}
 	a := Automation{
 		ID: in.ID, Name: strings.TrimSpace(in.Name), Prompt: in.Prompt, Enabled: !in.Disabled, Schedule: sched,
-		Precheck: in.Precheck, Timeout: in.Timeout, Dir: in.Dir, Worktree: in.Worktree, Base: in.Base,
+		Precheck: in.Precheck, Timeout: in.Timeout, Grace: in.Grace, Dir: in.Dir, Worktree: in.Worktree, Base: in.Base,
 		Agent: in.Agent, Backend: in.Backend, Created: now, Updated: now,
 	}
 	if a.Timeout == 0 {
 		a.Timeout = 60
+	}
+	if a.Grace <= 0 {
+		a.Grace = 10
 	}
 	if a.Enabled {
 		a.NextRun = sched.Next(now)

@@ -86,3 +86,26 @@ func TestDays(t *testing.T) {
 		}
 	}
 }
+
+func TestMissed(t *testing.T) {
+	due := time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		grace int
+		late  time.Duration
+		want  bool
+	}{
+		{0, 10 * time.Minute, false}, // the default, 10 min
+		{0, 11 * time.Minute, true},
+		{720, 11 * time.Hour, false},
+		{720, 13 * time.Hour, true},
+	} {
+		if got := (Automation{Grace: c.grace, NextRun: due}).missed(due.Add(c.late)); got != c.want {
+			t.Errorf("grace %d, %v late: %v, want %v", c.grace, c.late, got, c.want)
+		}
+	}
+	s := &store{dir: t.TempDir()}
+	a, err := s.save(saveInput{Name: "n", Prompt: "p", Dir: t.TempDir(), Kind: "interval", Every: 5}, due)
+	if err != nil || a.Grace != 10 {
+		t.Errorf("saved grace %d %v, want 10", a.Grace, err)
+	}
+}
