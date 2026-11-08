@@ -60,6 +60,12 @@ func usePATH() {
 		if err == nil && len(out) > 0 {
 			os.Setenv("PATH", string(out))
 		}
+		// Rex puts its CLI on the PATH of its own terminals only; Shepherd finds it in the app, as this does
+		home, _ := os.UserHomeDir()
+		rex := filepath.Join(home, "Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS")
+		if _, err := os.Stat(filepath.Join(rex, "rex")); err == nil {
+			os.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+rex)
+		}
 	})
 }
 

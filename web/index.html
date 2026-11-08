@@ -37,6 +37,8 @@
     .field > small, .main > small { font-size: 12px; color: var(--text-faint); }
     .field input:not([type=checkbox], [type=radio]), .field select, .field textarea { width: 100%; }
     .prompt { flex: 1; min-height: 180px; }
+    .examples { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+    .examples > span { margin-right: 4px; }
     .prompt textarea { flex: 1; min-height: 160px; padding: 12px 14px; resize: none; line-height: 1.6; }
     .labelrow { display: flex; align-items: center; gap: 8px; }
     .labelrow > :first-child { flex: 1; }
@@ -95,6 +97,7 @@
         <label class="field prompt"><span>Prompt</span>
           <textarea name="prompt" required placeholder="Run the weekly dependency audit and summarize risky changes."></textarea></label>
         <small>The agent's first message: skills, file paths and slash commands work as they do when you type them.</small>
+        <div class="examples" id="examples"><span class="caps">Start from</span></div>
       </div>
       <div class="side">
         <select name="agent" aria-label="Agent"><option value="">Claude Code</option><option value="codex">Codex</option></select>
@@ -270,11 +273,53 @@
   }
   F.backend.addEventListener('change', () => projects(F.project.value === 'other' || !F.project.value ? F.dir.value : F.project.value));
 
+  // examples a run is worth its tokens for: each names the commands it starts from, says what not to touch and what
+  // to end with, and has a precheck where a run has nothing to do most days
+  const examples = [
+    { name: 'Review PRs waiting on me', preset: 'weekdays', at: '09:30', worktree: true,
+      precheck: 'gh pr list --search review-requested:@me | grep -q .',
+      prompt: `Review every open PR that asks for my review (\`gh pr list --search review-requested:@me\`). For each one: check it out here (\`gh pr checkout <n>\`), read its description and the whole diff, run the tests and the linter for what it touches, and look for bugs, missing tests and changes the description doesn't mention.
+
+Don't post anything. End with a section per PR: a verdict (approve or changes needed), each issue with its file:line, and the review comments you'd leave, ready for me to post.` },
+    { name: 'Answer review on my PRs', preset: 'weekdays', at: '10:00', worktree: true,
+      precheck: 'gh pr list --author @me --search review:changes_requested | grep -q .',
+      prompt: `For each of my open PRs with changes requested (\`gh pr list --author @me --search review:changes_requested\`): check it out (\`gh pr checkout <n>\`), read the unresolved review threads (\`gh pr view <n> --comments\`), make the changes the reviewers asked for, run the tests, then commit and push to the PR's branch.
+
+Where a comment is unclear or you disagree with it, leave the code alone and draft a reply instead. End with what you changed in each PR and the replies for me to post.` },
+    { name: 'Fix red CI', preset: 'interval', every: 60, worktree: true,
+      precheck: `gh run list --branch "$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)" --limit 1 --json conclusion -q '.[0].conclusion' | grep -qx failure`,
+      prompt: `The last CI run on the default branch failed. Find it (\`gh run list --branch <default branch> --limit 5\`), read the failing step's log (\`gh run view <id> --log-failed\`) and reproduce the failure here.
+
+Stop and say why if an open PR already fixes it, or if it is flaky: it passes locally and no recent commit explains it. Otherwise fix the cause, not the test, on a new branch, run the whole test suite, and open a PR that names the failing run and the commit that broke it.` },
+    { name: 'Morning brief', preset: 'weekdays', at: '09:00', worktree: false,
+      prompt: `Brief me on this repository since the last working day: commits on the default branch, PRs merged and opened, PRs waiting on me (my review requested, or mine with new comments or failing checks), new issues, and the state of CI. Use \`git log\` and \`gh\`.
+
+Lead with what needs me today, most urgent first, and keep everything else to one line each. Change nothing.` },
+    { name: 'Weekly dependency update', preset: 'custom', days: [1], at: '10:00', worktree: true,
+      prompt: `Check this project's dependencies with its package manager's own audit and outdated commands. Update those with a security advisory, and otherwise patch and minor versions; leave major versions as they are.
+
+Build and run the tests after each group of updates, and drop an update that breaks them. Open one PR with the updates, the advisories they fix, and the major versions left out, each with what its changelog says would break.` },
+  ];
+  for (const x of examples) {
+    $('#examples').append(el('button', { type: 'button', className: 'secondary small', onclick: () => {
+      F.name.value = x.name;
+      F.prompt.value = x.prompt;
+      F.workspace.value = x.worktree ? 'worktree' : 'folder';
+      F.preset.value = x.preset;
+      if (x.at) F.at.value = x.at;
+      if (x.every) F.every.value = x.every;
+      dayBoxes.querySelectorAll('input').forEach((b) => b.checked = (x.days ?? []).includes(+b.value));
+      F.precheck.value = x.precheck ?? '';
+      show();
+    } }, x.name));
+  }
+
   function open(a) {
     form.reset();
     $('#edit-title').textContent = a ? 'Edit automation' : 'Create automation';
     $('#save').textContent = a ? 'Save' : 'Create';
     $('#delete').hidden = !a;
+    $('#examples').hidden = !!a;
     F.id.value = '';
     if (a) {
       for (const k of ['id', 'name', 'prompt', 'dir', 'base', 'agent', 'backend', 'precheck']) F[k].value = a[k] ?? '';
