@@ -153,6 +153,12 @@ func main() {
 		return shepherdBackend(), nil
 	})
 
+	paddock.Command(app, "projects", "The repositories the backend's terminals are in (Shepherd's backend with no --backend)", func(_ *paddock.Ctx, in struct {
+		Backend string `json:"backend"`
+	}) ([]Project, error) {
+		return projects(in.Backend)
+	})
+
 	// ponytail: paddock has no hook for the service's own work, so the scheduler starts when the binary is the
 	// service (`serve`); a paddock.App.OnServe when a second extension needs one
 	if len(os.Args) > 1 && os.Args[1] == "serve" {

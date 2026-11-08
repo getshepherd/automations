@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -370,4 +372,118 @@ func precheck(a Automation) (bool, string) {
 		return false, fmt.Sprintf("timed out after %ds\n%s", a.Timeout, text)
 	}
 	return err == nil, text
+}
+
+// Project is a repository one of the backend's terminals is in, for the form's project picker.
+type Project struct {
+	Name string `json:"name"`
+	Dir  string `json:"dir"`
+}
+
+// projects are the repositories the backend's terminals are in, each once: a worktree counts as the repository it
+// belongs to, and a folder outside git is left out (the form takes any other folder by its path).
+func projects(backend string) ([]Project, error) {
+	usePATH()
+	if backend == "" {
+		backend = shepherdBackend()
+	}
+	var dirs []string
+	switch backend {
+	case "herdr":
+		out, err := run("", "herdr", "workspace", "list")
+		if err != nil {
+			return nil, err
+		}
+		var r struct {
+			Result struct {
+				Workspaces []struct {
+					Worktree struct {
+						RepoRoot string `json:"repo_root"`
+					} `json:"worktree"`
+				} `json:"workspaces"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal([]byte(out), &r); err != nil {
+			return nil, err
+		}
+		for _, w := range r.Result.Workspaces {
+			dirs = append(dirs, w.Worktree.RepoRoot)
+		}
+	case "rex":
+		// ponytail: a session's folder is its first window's focused block's, as Shepherd names a Rex workspace;
+		// two calls a session, side by side
+		out, err := run("", "rex", "list", "--json")
+		if err != nil {
+			return nil, err
+		}
+		var l struct {
+			Sessions []struct {
+				ID string `json:"session_id"`
+			} `json:"sessions"`
+		}
+		if err := json.Unmarshal([]byte(out), &l); err != nil {
+			return nil, err
+		}
+		dirs = make([]string, len(l.Sessions))
+		var wg sync.WaitGroup
+		for i, s := range l.Sessions {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				out, _ := run("", "rex", "session", "inspect", s.ID, "--json")
+				if block := field(out, "windows[0].focused_block_id"); block != "" {
+					out, _ := run("", "rex", "block", "call", "-s", s.ID, "-b", block, "process")
+					dirs[i] = field(out, "foreground.cwd")
+				}
+			}()
+		}
+		wg.Wait()
+	case "tmux":
+		out, err := run("", "tmux", "list-panes", "-a", "-F", "#{pane_current_path}")
+		if err != nil && (strings.Contains(err.Error(), "no server running") || strings.Contains(err.Error(), "error connecting")) {
+			return []Project{}, nil // no server: nothing open
+		}
+		if err != nil {
+			return nil, err
+		}
+		dirs = strings.Split(out, "\n")
+	case "hc":
+		out, err := run("", "hc", "ls", "--json")
+		if err != nil {
+			return nil, err
+		}
+		var l struct {
+			Terminals []struct {
+				Cwd        string `json:"cwd"`
+				Foreground struct {
+					Cwd string `json:"cwd"`
+				} `json:"foreground"`
+			} `json:"terminals"`
+		}
+		if err := json.Unmarshal([]byte(out), &l); err != nil {
+			return nil, err
+		}
+		for _, t := range l.Terminals {
+			dirs = append(dirs, cmp.Or(t.Foreground.Cwd, t.Cwd))
+		}
+	default:
+		return nil, fmt.Errorf("unknown backend %q", backend)
+	}
+	seen := map[string]bool{}
+	list := []Project{}
+	for _, d := range dirs {
+		if d = strings.TrimSpace(d); d == "" {
+			continue
+		}
+		// the common git dir is the main checkout's .git, for a worktree too
+		out, err := run(d, "git", "rev-parse", "--path-format=absolute", "--git-common-dir")
+		root := filepath.Dir(strings.TrimSpace(out))
+		if err != nil || filepath.Base(strings.TrimSpace(out)) != ".git" || seen[root] {
+			continue
+		}
+		seen[root] = true
+		list = append(list, Project{Name: filepath.Base(root), Dir: root})
+	}
+	slices.SortFunc(list, func(a, b Project) int { return cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) })
+	return list, nil
 }

@@ -101,7 +101,10 @@
         <label class="field"><span>Backend</span>
           <select name="backend"><option value="" id="backend-default">Shepherd's</option><option value="herdr">herdr</option><option value="rex">Rex</option><option value="hc">hc</option><option value="tmux">tmux</option></select>
           <small>Where its terminal opens.</small></label>
-        <label class="field"><span>Project</span><input name="dir" required autocomplete="off" placeholder="~/Developer/project"></label>
+        <div class="field"><label class="caps" for="project">Project</label>
+          <select name="project" id="project" required></select>
+          <input name="dir" autocomplete="off" placeholder="~/Developer/project" aria-label="Folder" hidden>
+          <small id="project-hint"></small></div>
         <div class="field" role="group" aria-labelledby="ws-label"><span id="ws-label">Workspace</span>
           <div class="segments">
             <label><input type="radio" name="workspace" value="worktree" checked> Worktree</label>
@@ -231,6 +234,11 @@
   // the presets are views of the stored kinds: every day, weekdays and custom days are all daily
   const show = () => {
     form.querySelectorAll('[data-preset]').forEach((e) => e.hidden = !e.dataset.preset.split(' ').includes(F.preset.value));
+    const other = F.project.value === 'other';
+    F.dir.hidden = !other;
+    F.dir.required = other;
+    if (F.project.value && !other) F.dir.value = F.project.value;
+    $('#project-hint').textContent = $('#project-hint').dataset.error || (other ? '' : F.project.value);
     const worktree = F.workspace.value === 'worktree';
     F.base.hidden = !worktree;
     $('#ws-hint').textContent = worktree ? `A new worktree each run, branched from ${F.base.value.trim() || "the folder's current branch"}.` : 'Each run in the project folder itself.';
@@ -242,6 +250,25 @@
     if (![...select.options].some((o) => o.value === String(v))) select.append(el('option', { value: v }, label));
     select.value = v;
   };
+
+  // the picker lists the repositories the backend's terminals are in; a folder of the automation's that isn't one of
+  // them, or any other, is "Other folder…" with its path
+  async function projects(dir) {
+    const backend = F.backend.value;
+    const hint = $('#project-hint');
+    F.project.replaceChildren(el('option', { value: '', disabled: true }, 'Loading projects…'));
+    let list = [];
+    delete hint.dataset.error;
+    try { list = await call('projects', { backend }); } catch (e) { hint.dataset.error = e.message; }
+    if (F.backend.value !== backend) return; // changed again while this one listed
+    F.project.replaceChildren(el('option', { value: '', disabled: true }, list.length ? 'Choose a project' : hint.dataset.error ? "Couldn't list projects" : 'No projects open'),
+      ...list.map((p) => el('option', { value: p.dir, title: p.dir }, p.name)), el('option', { value: 'other' }, 'Other folder…'));
+    const match = dir && list.find((p) => p.dir === dir || (dir.startsWith('~/') && p.dir.endsWith(dir.slice(1))));
+    F.project.value = match ? match.dir : dir ? 'other' : '';
+    F.dir.value = dir;
+    show();
+  }
+  F.backend.addEventListener('change', () => projects(F.project.value === 'other' || !F.project.value ? F.dir.value : F.project.value));
 
   function open(a) {
     form.reset();
@@ -264,6 +291,7 @@
       if (s.run_at) { const t = new Date(s.run_at); F.run_at.value = new Date(t - t.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
       dayBoxes.querySelectorAll('input').forEach((b) => b.checked = (s.weekdays ?? []).includes(+b.value));
     }
+    projects(a?.dir ?? '');
     show();
     $('#edit').showModal();
     $('.main').scrollTop = $('.side').scrollTop = 0;

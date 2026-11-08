@@ -5,6 +5,8 @@ of the backend Shepherd shows (herdr, Rex, hc or tmux), where you see it and can
 worktree (branched from a base) or in a folder of yours. Built on
 [paddock](https://github.com/getshepherd/extensions): one Go binary with its page, a CLI and a service.
 
+- **Project**: the form lists the repositories the backend's terminals are in (herdr's workspaces, Rex's and tmux's
+  sessions, hc's terminals), a worktree as its repository; any other folder goes by its path. `automations projects`.
 - **When**: daily at HH:MM on chosen weekdays, every N minutes, once, or a cron line. A run the machine slept
   through by more than its grace (10 minutes unless `--grace` says otherwise) is recorded as missed, not fired late.
 - **Precheck**: a shell command run in the folder before a scheduled run; exit 0 runs it, anything else skips it
