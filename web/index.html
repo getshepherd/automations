@@ -29,6 +29,8 @@
     .panes { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 320px; }
     .main { display: flex; flex-direction: column; gap: 6px; padding: 24px 28px; overflow: auto; }
     .side { display: flex; flex-direction: column; gap: 16px; padding: 20px; border-left: 1px solid var(--border); overflow: auto; }
+    /* the column scrolls instead: a flex child left to shrink is the agent's select, squashed below the others */
+    .side > * { flex: none; }
     input.title { height: auto; margin-bottom: 18px; padding: 0; border: 0; background: none; font-size: 26px; font-weight: 600; color: var(--text); }
     input.title:focus { box-shadow: none; }
     .field { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 0; }
