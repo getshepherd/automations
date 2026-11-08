@@ -1,0 +1,28 @@
+# A tag (v1.0.0) builds the extension for every system Shepherd runs on and attaches the binaries to its release, named
+# <repo>-<os>-<arch>: Shepherd's "Install from GitHub" picks the one for its machine and runs its `install`.
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: |
+          name=${GITHUB_REPOSITORY##*/}
+          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/amd64; do
+            os=${target%/*} arch=${target#*/} ext=
+            [ "$os" = windows ] && ext=.exe
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags=-s -o "dist/$name-$os-$arch$ext" .
+          done
+      - name: Release
+        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

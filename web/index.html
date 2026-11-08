@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Automations</title>
+  <link rel="stylesheet" href="/_paddock/paddock.css">
+  <style>
+    header { display: flex; align-items: center; gap: 12px; }
+    header h1 { flex: 1; margin: 0; }
+    .rows li { display: flex; align-items: center; gap: 12px; }
+    .what { flex: 1; min-width: 0; cursor: pointer; }
+    .what b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .what small { color: var(--text-muted); }
+    .status { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+    .status.failed { color: var(--danger); }
+    .status.started { color: var(--success); }
+    dialog form { display: grid; gap: 10px; min-width: min(560px, 90vw); }
+    dialog label > span { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+    .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .days { display: flex; gap: 4px; flex-wrap: wrap; }
+    .days label { font-size: 12px; }
+    [hidden] { display: none !important; }
+    #runs table { width: 100%; }
+    #runs td { vertical-align: top; font-size: 12px; }
+    #runs pre { margin: 4px 0 0; white-space: pre-wrap; max-height: 120px; overflow: auto; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Automations</h1>
+    <button id="new"><p-icon name="add-circle"></p-icon> New automation</button>
+  </header>
+  <p><small id="backend"></small></p>
+
+  <ul id="list" class="rows"></ul>
+  <p id="empty" hidden>No automations yet. A prompt that runs on a schedule opens an agent in its own terminal, in a new
+    worktree or a folder of yours. Agents add them with <code>automations save --name … --prompt … --dir … --kind daily --at 09:00</code>.</p>
+
+  <section id="runs" hidden>
+    <h2 id="runs-title"></h2>
+    <table>
+      <thead><tr><th>When</th><th>Status</th><th>Where</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+
+<dialog id="edit">
+  <h2 id="edit-title">New automation</h2>
+  <form id="form" method="dialog">
+    <input type="hidden" name="id">
+    <label><span>Name</span><input name="name" required autocomplete="off" placeholder="Review open PRs"></label>
+    <label><span>Prompt — the agent's first message</span><textarea name="prompt" rows="5" required placeholder="Review the pull requests that ask for my review…"></textarea></label>
+    <label><span>Folder or repository</span><input name="dir" required autocomplete="off" placeholder="~/Developer/project"></label>
+    <div class="pair">
+      <label><input type="checkbox" role="switch" name="worktree"> A new worktree per run</label>
+      <label id="base-field"><span>From branch (empty: the folder's current)</span><input name="base" autocomplete="off"></label>
+    </div>
+    <div class="pair">
+      <label><span>Agent</span><select name="agent"><option value="">claude</option><option value="codex">codex</option></select></label>
+      <label><span>Backend</span><select name="backend"><option value="" id="backend-default">Shepherd's</option><option>herdr</option><option value="rex">Rex</option><option>hc</option><option>tmux</option></select></label>
+    </div>
+    <div class="pair">
+      <label><span>When</span>
+        <select name="kind">
+          <option value="daily">Daily at a time</option>
+          <option value="interval">Every N minutes</option>
+          <option value="cron">Cron</option>
+          <option value="once">Once</option>
+        </select>
+      </label>
+      <label data-kind="daily"><span>At</span><input type="time" name="at" value="09:00"></label>
+      <label data-kind="interval"><span>Minutes</span><input type="number" name="every" min="1" value="60"></label>
+      <label data-kind="cron"><span>minute hour day month weekday</span><input name="cron" placeholder="0 9 * * 1-5" autocomplete="off"></label>
+      <label data-kind="once"><span>At</span><input type="datetime-local" name="run_at"></label>
+    </div>
+    <div class="days" data-kind="daily"></div>
+    <label><span>Precheck — a shell command in the folder before a scheduled run; exit 0 runs it, anything else skips it</span>
+      <input name="precheck" autocomplete="off" placeholder="gh pr list --search 'review-requested:@me' | grep -q ."></label>
+    <label><input type="checkbox" role="switch" name="enabled" checked> On</label>
+  </form>
+  <footer>
+    <button class="danger" id="delete" hidden>Delete</button>
+    <span style="flex: 1"></span>
+    <button class="secondary" onclick="this.closest('dialog').close()">Cancel</button>
+    <button id="save">Save</button>
+  </footer>
+</dialog>
+
+<script type="module">
+  import { call, on, toast, confirm } from '/_paddock/paddock.js';
+
+  const $ = (s, el = document) => el.querySelector(s);
+  const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+  const icon = (name) => { const i = document.createElement('p-icon'); i.setAttribute('name', name); return i; };
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const fail = (e) => toast(e.message, { kind: 'error' });
+  const when = (t) => t ? new Date(t).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
+
+  function describe(s) {
+    switch (s.kind) {
+      case 'interval': return `every ${s.every} min`;
+      case 'once': return `once, ${when(s.run_at)}`;
+      case 'cron': return `cron ${s.cron}`;
+      case 'daily': {
+        const d = s.weekdays?.length ? s.weekdays.map((n) => days[n]).join(' ') : 'every day';
+        return `${s.at}, ${d}`;
+      }
+    }
+  }
+
+  let shown = null; // the automation whose runs are open
+  let automations = [];
+
+  async function load() {
+    automations = await call('list');
+    const list = $('#list');
+    list.replaceChildren();
+    $('#empty').hidden = automations.length > 0;
+    for (const a of automations) {
+      const what = el('div', { className: 'what', onclick: () => showRuns(a) },
+        el('b', {}, a.name),
+        el('small', {}, `${describe(a.schedule)} · ${a.worktree ? 'worktree of ' : ''}${a.dir}` + (a.enabled && a.next_run ? ` · next ${when(a.next_run)}` : '')));
+      const toggle = el('input', { type: 'checkbox', checked: a.enabled, title: a.enabled ? 'On' : 'Off' });
+      toggle.setAttribute('role', 'switch');
+      toggle.onchange = () => call('enable', { id: a.id, on: toggle.checked }).catch(fail);
+      const runNow = el('button', { className: 'secondary small', title: 'Run now, without the precheck' }, icon('play'), ' Run');
+      runNow.onclick = async () => {
+        runNow.setAttribute('aria-busy', 'true');
+        try {
+          const r = await call('run', { id: a.id });
+          r.status === 'failed' ? toast(r.error, { kind: 'error' }) : toast(`Started on ${r.place?.backend}`, { kind: 'success' });
+        } catch (e) { fail(e); }
+        runNow.removeAttribute('aria-busy');
+      };
+      const edit = el('button', { className: 'quiet icon', title: 'Edit', onclick: () => open(a) }, icon('pen'));
+      list.append(el('li', {}, what, runNow, edit, toggle));
+    }
+    if (shown) showRuns(automations.find((a) => a.id === shown.id));
+  }
+
+  async function showRuns(a) {
+    shown = a;
+    const section = $('#runs');
+    if (!a) { section.hidden = true; return; }
+    section.hidden = false;
+    $('#runs-title').textContent = `Runs of ${a.name}`;
+    const body = $('tbody', section);
+    body.replaceChildren();
+    const runs = await call('runs', { id: a.id });
+    if (!runs.length) body.append(el('tr', {}, el('td', { colSpan: 3 }, 'No runs yet.')));
+    for (const r of runs) {
+      const status = el('td', {}, el('span', { className: `status ${r.status}` }, r.status.replace('_', ' ')), r.trigger === 'manual' ? ' (by hand)' : '');
+      if (r.error) status.append(el('pre', {}, r.error));
+      if (r.precheck) status.append(el('pre', {}, r.precheck));
+      const where = el('td', {}, r.place ? `${r.place.backend}${r.place.branch ? ` · ${r.place.branch}` : ''}` : '');
+      body.append(el('tr', {}, el('td', {}, when(r.at)), status, where));
+    }
+  }
+
+  // the form
+  const form = $('#form');
+  // fields by name: F.id and F.name are the form's own attributes
+  const F = form.elements;
+  const dayBoxes = $('.days', form);
+  days.forEach((d, n) => dayBoxes.append(el('label', {}, el('input', { type: 'checkbox', value: n }), ' ', d)));
+  const showKind = () => form.querySelectorAll('[data-kind]').forEach((e) => e.hidden = e.dataset.kind !== F.kind.value);
+  F.kind.onchange = showKind;
+  const showBase = () => $('#base-field').hidden = !F.worktree.checked;
+  F.worktree.onchange = showBase;
+
+  function open(a) {
+    form.reset();
+    $('#edit-title').textContent = a ? 'Edit automation' : 'New automation';
+    $('#delete').hidden = !a;
+    if (a) {
+      for (const k of ['id', 'name', 'prompt', 'dir', 'base', 'agent', 'backend', 'precheck']) F[k].value = a[k] ?? '';
+      F.worktree.checked = a.worktree;
+      F.enabled.checked = a.enabled;
+      const s = a.schedule;
+      F.kind.value = s.kind;
+      if (s.at) F.at.value = s.at;
+      if (s.every) F.every.value = s.every;
+      if (s.cron) F.cron.value = s.cron;
+      if (s.run_at) { const t = new Date(s.run_at); F.run_at.value = new Date(t - t.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
+      dayBoxes.querySelectorAll('input').forEach((b) => b.checked = (s.weekdays ?? []).includes(+b.value));
+    } else {
+      F.id.value = '';
+    }
+    showKind();
+    showBase();
+    $('#edit').showModal();
+  }
+
+  $('#new').onclick = () => open(null);
+  $('#save').onclick = async () => {
+    if (!form.reportValidity()) return;
+    const f = F;
+    const input = {
+      id: f.id.value, name: f.name.value, prompt: f.prompt.value, dir: f.dir.value, worktree: f.worktree.checked,
+      base: f.base.value, agent: f.agent.value, backend: f.backend.value, precheck: f.precheck.value, disabled: !f.enabled.checked,
+      kind: f.kind.value,
+    };
+    if (input.kind === 'daily') { input.at = f.at.value; input.days = [...dayBoxes.querySelectorAll('input:checked')].map((b) => b.value); }
+    if (input.kind === 'interval') input.every = +f.every.value;
+    if (input.kind === 'cron') input.cron = f.cron.value;
+    if (input.kind === 'once') input.run_at = f.run_at.value.replace('T', ' ');
+    try {
+      await call('save', input);
+      $('#edit').close();
+    } catch (e) { fail(e); }
+  };
+  $('#delete').onclick = async () => {
+    const id = F.id.value;
+    if (!await confirm(`Delete “${F.name.value}” and its runs?`, { ok: 'Delete', danger: true })) return;
+    try {
+      await call('remove', { id });
+      if (shown?.id === id) shown = null;
+      $('#edit').close();
+    } catch (e) { fail(e); }
+  };
+
+  call('backend').then((b) => {
+    $('#backend').textContent = `Runs go to ${b}, the backend Shepherd shows, unless an automation names another.`;
+    $('#backend-default').textContent = `Shepherd's (${b})`;
+  }).catch(() => {});
+  on('changed', () => load().catch(fail));
+  load().catch(fail);
+</script>
+</body>
+</html>
