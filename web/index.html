@@ -15,11 +15,17 @@
     .status { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
     .status.failed { color: var(--danger); }
     .status.started { color: var(--success); }
-    dialog form { display: grid; gap: 10px; min-width: min(560px, 90vw); }
-    dialog label > span { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
-    .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .days { display: flex; gap: 4px; flex-wrap: wrap; }
-    .days label { font-size: 12px; }
+    /* the form: a label over each field, full width; paddock's own label is a row and its dialog 360 px */
+    #edit { width: min(560px, calc(100vw - 32px)); }
+    #form { display: flex; flex-direction: column; align-items: stretch; gap: 14px; }
+    .field { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 0; }
+    .field > span { font-size: 12px; font-weight: 500; color: var(--text-muted); }
+    .field > small { font-size: 12px; color: var(--text-faint); }
+    .field > input, .field > select, .field > textarea { width: 100%; box-sizing: border-box; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .days { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+    textarea[name=prompt] { min-height: 96px; }
+    input[name=precheck], input[name=cron] { font-family: var(--mono); font-size: 12px; }
     [hidden] { display: none !important; }
     #runs table { width: 100%; }
     #runs td { vertical-align: top; font-size: 12px; }
@@ -35,8 +41,8 @@
   <p><small id="backend"></small></p>
 
   <ul id="list" class="rows"></ul>
-  <p id="empty" hidden>No automations yet. A prompt that runs on a schedule opens an agent in its own terminal, in a new
-    worktree or a folder of yours. Agents add them with <code>automations save --name … --prompt … --dir … --kind daily --at 09:00</code>.</p>
+  <p id="empty" hidden>No automations yet. Each one is a prompt that runs on a schedule as an agent in its own
+    terminal, in a new worktree or a folder of yours. Agents add them too, with the <code>automations</code> CLI.</p>
 
   <section id="runs" hidden>
     <h2 id="runs-title"></h2>
@@ -51,19 +57,19 @@
   <h2 id="edit-title">New automation</h2>
   <form id="form" method="dialog">
     <input type="hidden" name="id">
-    <label><span>Name</span><input name="name" required autocomplete="off" placeholder="Review open PRs"></label>
-    <label><span>Prompt — the agent's first message</span><textarea name="prompt" rows="5" required placeholder="Review the pull requests that ask for my review…"></textarea></label>
-    <label><span>Folder or repository</span><input name="dir" required autocomplete="off" placeholder="~/Developer/project"></label>
-    <div class="pair">
-      <label><input type="checkbox" role="switch" name="worktree"> A new worktree per run</label>
-      <label id="base-field"><span>From branch (empty: the folder's current)</span><input name="base" autocomplete="off"></label>
+    <label class="field"><span>Name</span><input name="name" required autocomplete="off" placeholder="Review open PRs"></label>
+    <label class="field"><span>Prompt</span>
+      <textarea name="prompt" rows="4" required placeholder="Review the pull requests that ask for my review and leave comments."></textarea>
+      <small>The agent's first message.</small></label>
+    <label class="field"><span>Folder or repository</span><input name="dir" required autocomplete="off" placeholder="~/Developer/project"></label>
+    <label><input type="checkbox" role="switch" name="worktree"> A new worktree per run</label>
+    <label class="field" id="base-field"><span>From branch</span><input name="base" autocomplete="off" placeholder="the folder's current branch"></label>
+    <div class="grid">
+      <label class="field"><span>Agent</span><select name="agent"><option value="">Claude Code</option><option value="codex">Codex</option></select></label>
+      <label class="field"><span>Backend</span><select name="backend"><option value="" id="backend-default">Shepherd's</option><option value="herdr">herdr</option><option value="rex">Rex</option><option value="hc">hc</option><option value="tmux">tmux</option></select></label>
     </div>
-    <div class="pair">
-      <label><span>Agent</span><select name="agent"><option value="">claude</option><option value="codex">codex</option></select></label>
-      <label><span>Backend</span><select name="backend"><option value="" id="backend-default">Shepherd's</option><option>herdr</option><option value="rex">Rex</option><option>hc</option><option>tmux</option></select></label>
-    </div>
-    <div class="pair">
-      <label><span>When</span>
+    <div class="grid">
+      <label class="field"><span>When</span>
         <select name="kind">
           <option value="daily">Daily at a time</option>
           <option value="interval">Every N minutes</option>
@@ -71,14 +77,15 @@
           <option value="once">Once</option>
         </select>
       </label>
-      <label data-kind="daily"><span>At</span><input type="time" name="at" value="09:00"></label>
-      <label data-kind="interval"><span>Minutes</span><input type="number" name="every" min="1" value="60"></label>
-      <label data-kind="cron"><span>minute hour day month weekday</span><input name="cron" placeholder="0 9 * * 1-5" autocomplete="off"></label>
-      <label data-kind="once"><span>At</span><input type="datetime-local" name="run_at"></label>
+      <label class="field" data-kind="daily"><span>At</span><input type="time" name="at" value="09:00"></label>
+      <label class="field" data-kind="interval"><span>Every, in minutes</span><input type="number" name="every" min="1" value="60"></label>
+      <label class="field" data-kind="cron"><span>Minute hour day month weekday</span><input name="cron" placeholder="0 9 * * 1-5" autocomplete="off"></label>
+      <label class="field" data-kind="once"><span>At</span><input type="datetime-local" name="run_at"></label>
     </div>
-    <div class="days" data-kind="daily"></div>
-    <label><span>Precheck — a shell command in the folder before a scheduled run; exit 0 runs it, anything else skips it</span>
-      <input name="precheck" autocomplete="off" placeholder="gh pr list --search 'review-requested:@me' | grep -q ."></label>
+    <div class="field" data-kind="daily"><div class="days"></div><small>None checked: every day.</small></div>
+    <label class="field"><span>Precheck</span>
+      <input name="precheck" autocomplete="off" placeholder="gh pr list --search review-requested:@me | grep -q .">
+      <small>A shell command run in the folder before each scheduled run: exit 0 runs it, anything else skips it. Optional.</small></label>
     <label><input type="checkbox" role="switch" name="enabled" checked> On</label>
   </form>
   <footer>
@@ -105,7 +112,9 @@
       case 'once': return `once, ${when(s.run_at)}`;
       case 'cron': return `cron ${s.cron}`;
       case 'daily': {
-        const d = s.weekdays?.length ? s.weekdays.map((n) => days[n]).join(' ') : 'every day';
+        const set = [...new Set(s.weekdays ?? [])].sort().join('');
+        const d = { '': 'every day', '0123456': 'every day', '12345': 'weekdays', '06': 'weekends' }[set]
+          ?? [1, 2, 3, 4, 5, 6, 0].filter((n) => s.weekdays.includes(n)).map((n) => days[n]).join(' ');
         return `${s.at}, ${d}`;
       }
     }
@@ -165,7 +174,8 @@
   // fields by name: F.id and F.name are the form's own attributes
   const F = form.elements;
   const dayBoxes = $('.days', form);
-  days.forEach((d, n) => dayBoxes.append(el('label', {}, el('input', { type: 'checkbox', value: n }), ' ', d)));
+  // Monday first; the values stay 0 (Sunday) to 6
+  [1, 2, 3, 4, 5, 6, 0].forEach((n) => dayBoxes.append(el('label', {}, el('input', { type: 'checkbox', value: n }), days[n])));
   const showKind = () => form.querySelectorAll('[data-kind]').forEach((e) => e.hidden = e.dataset.kind !== F.kind.value);
   F.kind.onchange = showKind;
   const showBase = () => $('#base-field').hidden = !F.worktree.checked;
@@ -227,7 +237,11 @@
     $('#backend-default').textContent = `Shepherd's (${b})`;
   }).catch(() => {});
   on('changed', () => load().catch(fail));
-  load().catch(fail);
+  // #new opens an empty form, #edit the first automation's: links to the form, and how its screenshots are taken
+  load().then(() => {
+    if (location.hash === '#new') open(null);
+    if (location.hash === '#edit' && automations[0]) open(automations[0]);
+  }).catch(fail);
 </script>
 </body>
 </html>
