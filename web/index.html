@@ -9,11 +9,39 @@
   <style>
     header { display: flex; align-items: center; gap: 12px; }
     header h1 { flex: 1; margin: 0; }
-    .rows li { display: flex; align-items: center; gap: 12px; }
-    .what { flex: 1; min-width: 0; cursor: pointer; }
-    .what b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .what small { color: var(--text-muted); }
-    .status { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+    /* the list: one line per cell, cut with an ellipsis; a cut cell's title has the whole text */
+    table.autos, table.runs { table-layout: fixed; }
+    .autos th, .autos td, .runs th, .runs td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .autos col.chev { width: 28px; }
+    .autos col.sched { width: 120px; }
+    .autos col.where { width: 20%; }
+    .autos col.next { width: 136px; }
+    .autos col.act { width: 132px; }
+    .autos td:first-child, .autos th:first-child { padding: 0 0 0 6px; }
+    tr.auto { cursor: pointer; }
+    tr.auto:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+    tr.auto .chev p-icon { color: var(--text-muted); transition: transform 0.15s; }
+    tr.auto[aria-expanded=true] .chev p-icon { transform: rotate(90deg); }
+    tr.auto.off td:not(.act) { color: var(--text-muted); }
+    .autos td.act { text-align: right; cursor: default; overflow: visible; text-overflow: clip; }
+    td.act > * { vertical-align: middle; }
+    td.act input[role=switch] { margin-left: 4px; }
+    .muted { color: var(--text-muted); }
+    /* a row's history, under it */
+    tbody tr.history:hover { background: none; }
+    tr.history > td { height: auto; padding: 0 0 10px 28px; }
+    .runs col.at { width: 30%; }
+    .runs col.st { width: 18%; }
+    .runs col.place { width: 26%; }
+    .runs th, .runs td { height: 28px; font-size: 12px; }
+    .runs tr:last-child td { border-bottom: 0; }
+    @media (max-width: 560px) {
+      .autos col.where, .autos col.next { width: 0; }
+      .autos .where, .autos .next { padding: 0; }
+      .runs col.place { width: 0; }
+      .runs .place { padding: 0; }
+    }
+    .status { color: var(--text-muted); }
     .status.failed { color: var(--danger); }
     .status.started { color: var(--success); }
     /* the dialog, after Orca's: a name and the prompt at left, the settings in a column at right; paddock's dialog is
@@ -60,9 +88,6 @@
       .side { border-left: 0; border-top: 1px solid var(--border); }
     }
     [hidden] { display: none !important; }
-    #runs table { width: 100%; }
-    #runs td { vertical-align: top; font-size: 12px; }
-    #runs pre { margin: 4px 0 0; white-space: pre-wrap; max-height: 120px; overflow: auto; }
   </style>
 </head>
 <body>
@@ -73,17 +98,13 @@
   </header>
   <p><small id="backend"></small></p>
 
-  <ul id="list" class="rows"></ul>
+  <table class="autos" id="table" hidden>
+    <colgroup><col class="chev"><col><col class="sched"><col class="where"><col class="next"><col class="act"></colgroup>
+    <thead><tr><th></th><th>Name</th><th class="sched">Schedule</th><th class="where">Where</th><th class="next">Next run</th><th></th></tr></thead>
+    <tbody id="list"></tbody>
+  </table>
   <p id="empty" hidden>No automations yet. Each one is a prompt that runs on a schedule as an agent in its own
     terminal, in a new worktree or a folder of yours. Agents add them too, with the <code>automations</code> CLI.</p>
-
-  <section id="runs" hidden>
-    <h2 id="runs-title"></h2>
-    <table>
-      <thead><tr><th>When</th><th>Status</th><th>Where</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </section>
 </main>
 
 <dialog id="edit" aria-labelledby="edit-title">
@@ -180,22 +201,35 @@
     }
   }
 
-  let shown = null; // the automation whose runs are open
+  const opened = new Set(); // the automations whose history is open
   let automations = [];
+
+  // a cell of one line, and the title it gets when it is cut or `full` says more (see the mouseover below)
+  const cell = (text, className = '', full = text) => {
+    const td = el('td', { className }, text ?? '');
+    td.dataset.full = full ?? '';
+    return td;
+  };
+  document.addEventListener('mouseover', (e) => {
+    const c = e.target.closest?.('td[data-full]');
+    if (c) c.title = c.scrollWidth > c.clientWidth || c.dataset.full !== c.textContent ? c.dataset.full : '';
+  });
+  // the next run without the year, which the list has no room for
+  const soon = (t) => new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const folder = (dir) => dir.replace(/\/+$/, '').split('/').pop() || dir;
 
   async function load() {
     automations = await call('list');
     const list = $('#list');
     list.replaceChildren();
     $('#empty').hidden = automations.length > 0;
+    $('#table').hidden = !automations.length;
+    for (const id of opened) if (!automations.some((a) => a.id === id)) opened.delete(id);
     for (const a of automations) {
-      const what = el('div', { className: 'what', onclick: () => showRuns(a) },
-        el('b', {}, a.name),
-        el('small', {}, `${describe(a.schedule)} · ${a.worktree ? 'worktree of ' : ''}${a.dir}` + (a.enabled && a.next_run ? ` · next ${when(a.next_run)}` : '')));
       const toggle = el('input', { type: 'checkbox', checked: a.enabled, title: a.enabled ? 'On' : 'Off' });
       toggle.setAttribute('role', 'switch');
       toggle.onchange = () => call('enable', { id: a.id, on: toggle.checked }).catch(fail);
-      const runNow = el('button', { className: 'secondary small', title: 'Run now, without the precheck' }, icon('play'), ' Run');
+      const runNow = el('button', { className: 'quiet small icon', title: 'Run now, without the precheck' }, icon('play'));
       runNow.onclick = async () => {
         runNow.setAttribute('aria-busy', 'true');
         try {
@@ -204,29 +238,42 @@
         } catch (e) { fail(e); }
         runNow.removeAttribute('aria-busy');
       };
-      const edit = el('button', { className: 'quiet icon', title: 'Edit', onclick: () => open(a) }, icon('pen'));
-      list.append(el('li', {}, what, runNow, edit, toggle));
+      const edit = el('button', { className: 'quiet small icon', title: 'Edit', onclick: () => open(a) }, icon('pen'));
+      const row = el('tr', { className: a.enabled ? 'auto' : 'auto off', tabIndex: 0 },
+        el('td', { className: 'chev' }, icon('alt-arrow-right')),
+        cell(a.name),
+        cell(describe(a.schedule), 'sched'),
+        cell(`${a.worktree ? 'worktree of ' : ''}${folder(a.dir)}`, 'where muted', `${a.worktree ? 'A new worktree of ' : ''}${a.dir}`),
+        cell(a.enabled && a.next_run ? soon(a.next_run) : '—', 'next muted', a.enabled && a.next_run ? when(a.next_run) : 'Off'),
+        el('td', { className: 'act' }, runNow, edit, toggle));
+      const history = el('tr', { className: 'history' }, el('td', { colSpan: 6 }));
+      const expand = (on) => {
+        on ? opened.add(a.id) : opened.delete(a.id);
+        row.setAttribute('aria-expanded', on);
+        history.hidden = !on;
+        if (on) showRuns(a, history.firstChild).catch(fail);
+      };
+      // the controls at the row's end are theirs, not the row's
+      row.onclick = (e) => { if (!e.target.closest('.act')) expand(!opened.has(a.id)); };
+      row.onkeydown = (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === row) { e.preventDefault(); expand(!opened.has(a.id)); } };
+      list.append(row, history);
+      expand(opened.has(a.id));
     }
-    if (shown) showRuns(automations.find((a) => a.id === shown.id));
   }
 
-  async function showRuns(a) {
-    shown = a;
-    const section = $('#runs');
-    if (!a) { section.hidden = true; return; }
-    section.hidden = false;
-    $('#runs-title').textContent = `Runs of ${a.name}`;
-    const body = $('tbody', section);
-    body.replaceChildren();
+  async function showRuns(a, into) {
     const runs = await call('runs', { id: a.id });
-    if (!runs.length) body.append(el('tr', {}, el('td', { colSpan: 3 }, 'No runs yet.')));
+    if (!runs.length) return into.replaceChildren(el('p', { className: 'muted' }, 'No runs yet.'));
+    const body = el('tbody');
     for (const r of runs) {
-      const status = el('td', {}, el('span', { className: `status ${r.status}` }, r.status.replace('_', ' ')), r.trigger === 'manual' ? ' (by hand)' : '');
-      if (r.error) status.append(el('pre', {}, r.error));
-      if (r.precheck) status.append(el('pre', {}, r.precheck));
-      const where = el('td', {}, r.place ? `${r.place.backend}${r.place.branch ? ` · ${r.place.branch}` : ''}` : '');
-      body.append(el('tr', {}, el('td', {}, when(r.at)), status, where));
+      const status = `${r.status.replace('_', ' ')}${r.trigger === 'manual' ? ', by hand' : ''}`;
+      const st = cell(status, `status ${r.status}`);
+      const place = r.place ? `${r.place.backend}${r.place.branch ? ` · ${r.place.branch}` : ''}` : '';
+      body.append(el('tr', {}, cell(when(r.at)), st, cell(place, 'place muted'), cell((r.error || r.precheck || '').trim(), 'muted')));
     }
+    into.replaceChildren(el('table', { className: 'runs' },
+      el('colgroup', {}, el('col', { className: 'at' }), el('col', { className: 'st' }), el('col', { className: 'place' }), el('col')),
+      body));
   }
 
   // the form
@@ -375,7 +422,7 @@ Build and run the tests after each group of updates, and drop an update that bre
     if (!await confirm(`Delete “${F.name.value}” and its runs?`, { ok: 'Delete', danger: true })) return;
     try {
       await call('remove', { id });
-      if (shown?.id === id) shown = null;
+      opened.delete(id);
       $('#edit').close();
     } catch (e) { fail(e); }
   };

@@ -24,6 +24,11 @@ import (
 //go:embed web
 var web embed.FS
 
+// What agents should know beyond the commands, which `automations skill` prints before them.
+//
+//go:embed skill.md
+var skill string
+
 type Automation struct {
 	ID       string   `json:"id"`
 	Name     string   `json:"name"`
@@ -92,6 +97,7 @@ const keepRuns = 100
 
 func main() {
 	app := paddock.New("automations", "Prompts that run on a schedule, each as an agent in its own terminal", web)
+	app.Skill(skill)
 	s := &store{dir: app.Dir()}
 
 	paddock.Command(app, "list", "List the automations", func(_ *paddock.Ctx, _ struct{}) ([]Automation, error) {
