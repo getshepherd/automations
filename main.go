@@ -97,6 +97,8 @@ const keepRuns = 100
 
 func main() {
 	app := paddock.New("automations", "Prompts that run on a schedule, each as an agent in its own terminal", web)
+	// its page is about everything, not one workspace: the sidebar's, in place of the panes
+	app.Show(paddock.Sidebar)
 	app.Skill(skill)
 	s := &store{dir: app.Dir()}
 
