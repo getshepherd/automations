@@ -193,13 +193,23 @@ func start(a Automation, label string) (Place, error) {
 	return p, nil
 }
 
-// herdrAgent starts the agent with herdr's own agent start, which waits until it is ready, the prompt as its first.
+// herdrAgent starts the agent with herdr's own agent start, which waits until it is ready, then submits the prompt.
+// The prompt goes in its own call, not as the agent's argument: herdr refuses an argument with a newline
+// (invalid_agent_argument, "cannot be encoded safely for the target shell"), and most prompts have one.
 func herdrAgent(p Place, name, kind, prompt string) error {
-	_, err := run(p.Dir, "herdr", "agent", "start", name, "--kind", kind, "--pane", p.Pane, "--timeout", "60000", "--", prompt)
+	_, err := run(p.Dir, "herdr", "agent", "start", name, "--kind", kind, "--pane", p.Pane, "--timeout", "60000")
 	if err != nil && strings.Contains(err.Error(), "agent_not_ready") {
-		go answerTrust(p) // blocked at startup: most likely the trust dialog of a folder it hasn't seen
+		// Blocked at startup: most likely the trust dialog of a folder it hasn't seen. The prompt follows its answer.
+		go func() {
+			answerTrust(p)
+			run(p.Dir, "herdr", "agent", "prompt", p.Pane, prompt, "--wait", "--until", "working", "--timeout", "60000")
+		}()
 		return nil
 	}
+	if err != nil {
+		return err
+	}
+	_, err = run(p.Dir, "herdr", "agent", "prompt", p.Pane, prompt, "--wait", "--until", "working", "--timeout", "60000")
 	return err
 }
 
