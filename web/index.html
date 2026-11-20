@@ -130,6 +130,7 @@
         <div class="field"><label class="caps" for="project">Project</label>
           <select name="project" id="project" required></select>
           <input name="dir" autocomplete="off" placeholder="~/Developer/project" aria-label="Folder" hidden>
+          <input name="socket" type="hidden">
           <small id="project-hint"></small></div>
         <div class="field" role="group" aria-labelledby="ws-label"><span id="ws-label">Workspace</span>
           <div class="segments">
@@ -290,7 +291,10 @@
     F.dir.hidden = !other;
     F.dir.required = other;
     if (F.project.value && !other) F.dir.value = F.project.value;
-    $('#project-hint').textContent = $('#project-hint').dataset.error || (other ? '' : F.project.value);
+    const herdr = (F.backend.value || shown) === 'herdr';
+    // a session's socket is <herdr's folder>/sessions/<name>/herdr.sock; the default one's lies in herdr's folder itself
+    const session = F.socket.value.match(/\/sessions\/([^/]+)\/[^/]+$/)?.[1] ?? 'default';
+    $('#project-hint').textContent = $('#project-hint').dataset.error || [other ? '' : F.project.value, herdr ? `In herdr's ${session} session.` : ''].filter(Boolean).join(' ');
     const worktree = F.workspace.value === 'worktree';
     F.base.hidden = !worktree;
     $('#ws-hint').textContent = worktree ? `A new worktree each run, branched from ${F.base.value.trim() || "the folder's current branch"}.` : 'Each run in the project folder itself.';
@@ -305,13 +309,16 @@
 
   // the picker lists the repositories the backend's terminals are in; a folder of the automation's that isn't one of
   // them, or any other, is "Other folder…" with its path
+  // On herdr they are the projects of a session: a new automation's, the one Shepherd shows (`window.shepherd`), an
+  // automation's, the one it was made in. Its runs open there.
   async function projects(dir) {
     const backend = F.backend.value;
+    const socket = F.socket.value;
     const hint = $('#project-hint');
     F.project.replaceChildren(el('option', { value: '', disabled: true }, 'Loading projects…'));
     let list = [];
     delete hint.dataset.error;
-    try { list = await call('projects', { backend }); } catch (e) { hint.dataset.error = e.message; }
+    try { list = await call('projects', { backend, socket }); } catch (e) { hint.dataset.error = e.message; }
     if (F.backend.value !== backend) return; // changed again while this one listed
     F.project.replaceChildren(el('option', { value: '', disabled: true }, list.length ? 'Choose a project' : hint.dataset.error ? "Couldn't list projects" : 'No projects open'),
       ...list.map((p) => el('option', { value: p.dir, title: p.dir }, p.name)), el('option', { value: 'other' }, 'Other folder…'));
@@ -370,6 +377,7 @@ Build and run the tests after each group of updates, and drop an update that bre
     $('#delete').hidden = !a;
     $('#examples').hidden = !!a;
     F.id.value = '';
+    F.socket.value = a ? a.socket ?? '' : window.shepherd?.session?.socket ?? '';
     if (a) {
       for (const k of ['id', 'name', 'prompt', 'dir', 'base', 'agent', 'backend', 'precheck']) F[k].value = a[k] ?? '';
       F.workspace.value = a.worktree ? 'worktree' : 'folder';
@@ -399,7 +407,7 @@ Build and run the tests after each group of updates, and drop an update that bre
     const preset = f.preset.value;
     const input = {
       id: f.id.value, name: f.name.value, prompt: f.prompt.value, dir: f.dir.value, worktree: f.workspace.value === 'worktree',
-      base: f.base.value, agent: f.agent.value, backend: f.backend.value, precheck: f.precheck.value, disabled: !f.enabled.checked,
+      base: f.base.value, agent: f.agent.value, backend: f.backend.value, socket: f.socket.value, precheck: f.precheck.value, disabled: !f.enabled.checked,
       grace: +f.grace.value, timeout: +f.timeout.value,
       kind: ['interval', 'cron', 'once'].includes(preset) ? preset : 'daily',
     };
@@ -427,7 +435,10 @@ Build and run the tests after each group of updates, and drop an update that bre
     } catch (e) { fail(e); }
   };
 
+  // the backend Shepherd shows, which an automation without one of its own runs on
+  let shown = 'herdr';
   call('backend').then((b) => {
+    shown = b;
     $('#backend').textContent = `Runs go to ${b}, the backend Shepherd shows, unless an automation names another.`;
     $('#backend-default').textContent = `Shepherd's (${b})`;
   }).catch(() => {});

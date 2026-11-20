@@ -30,6 +30,12 @@ type Place struct {
 	Pane    string `json:"pane"`              // Rex's block, tmux's pane, herdr's pane, hc's terminal
 	Dir     string `json:"dir"`
 	Branch  string `json:"branch,omitempty"`
+	Socket  string `json:"socket,omitempty"` // herdr: its session's API socket; empty: the default session
+}
+
+// herdr runs a herdr command on p's session.
+func (p Place) herdr(dir string, args ...string) (string, error) {
+	return runOn(p.Socket, dir, "herdr", args...)
 }
 
 // shepherdBackend is the backend Shepherd shows, from its settings beside the extensions folder.
@@ -70,8 +76,17 @@ func usePATH() {
 }
 
 func run(dir string, name string, args ...string) (string, error) {
+	return runOn("", dir, name, args...)
+}
+
+// runOn runs a command with HERDR_SOCKET_PATH set to socket, so a herdr command reaches that session; none leaves the
+// service's own.
+func runOn(socket, dir string, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
+	if socket != "" {
+		cmd.Env = append(os.Environ(), "HERDR_SOCKET_PATH="+socket)
+	}
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	if err := cmd.Run(); err != nil {
@@ -135,13 +150,13 @@ func start(a Automation, label string) (Place, error) {
 	if err != nil {
 		return Place{}, err
 	}
-	p := Place{Backend: backend, Dir: dir}
+	p := Place{Backend: backend, Dir: dir, Socket: a.Socket}
 	argv := []string{a.agent(), a.Prompt}
 
 	if a.Worktree {
 		p.Branch = "auto/" + label
 		if backend == "herdr" {
-			out, err := run(dir, "herdr", "worktree", "create", "--cwd", dir, "--branch", p.Branch, "--base", a.base(dir), "--label", a.Name, "--no-focus")
+			out, err := p.herdr(dir, "worktree", "create", "--cwd", dir, "--branch", p.Branch, "--base", a.base(dir), "--label", a.Name, "--no-focus")
 			if err != nil {
 				return p, err
 			}
@@ -159,7 +174,7 @@ func start(a Automation, label string) (Place, error) {
 
 	switch backend {
 	case "herdr":
-		out, err := run(p.Dir, "herdr", "workspace", "create", "--cwd", p.Dir, "--label", a.Name, "--no-focus")
+		out, err := p.herdr(p.Dir, "workspace", "create", "--cwd", p.Dir, "--label", a.Name, "--no-focus")
 		if err != nil {
 			return p, err
 		}
@@ -197,19 +212,19 @@ func start(a Automation, label string) (Place, error) {
 // The prompt goes in its own call, not as the agent's argument: herdr refuses an argument with a newline
 // (invalid_agent_argument, "cannot be encoded safely for the target shell"), and most prompts have one.
 func herdrAgent(p Place, name, kind, prompt string) error {
-	_, err := run(p.Dir, "herdr", "agent", "start", name, "--kind", kind, "--pane", p.Pane, "--timeout", "60000")
+	_, err := p.herdr(p.Dir, "agent", "start", name, "--kind", kind, "--pane", p.Pane, "--timeout", "60000")
 	if err != nil && strings.Contains(err.Error(), "agent_not_ready") {
 		// Blocked at startup: most likely the trust dialog of a folder it hasn't seen. The prompt follows its answer.
 		go func() {
 			answerTrust(p)
-			run(p.Dir, "herdr", "agent", "prompt", p.Pane, prompt, "--wait", "--until", "working", "--timeout", "60000")
+			p.herdr(p.Dir, "agent", "prompt", p.Pane, prompt, "--wait", "--until", "working", "--timeout", "60000")
 		}()
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	_, err = run(p.Dir, "herdr", "agent", "prompt", p.Pane, prompt, "--wait", "--until", "working", "--timeout", "60000")
+	_, err = p.herdr(p.Dir, "agent", "prompt", p.Pane, prompt, "--wait", "--until", "working", "--timeout", "60000")
 	return err
 }
 
@@ -239,7 +254,7 @@ func answerTrust(p Place) {
 func read(p Place) (string, error) {
 	switch p.Backend {
 	case "herdr":
-		return run(p.Dir, "herdr", "pane", "read", p.Pane, "--source", "recent-unwrapped", "--lines", "60")
+		return p.herdr(p.Dir, "pane", "read", p.Pane, "--source", "recent-unwrapped", "--lines", "60")
 	case "rex":
 		return run(p.Dir, "rex", "capture", "-s", p.Session, "-b", p.Pane, "--trim")
 	case "tmux":
@@ -253,7 +268,7 @@ func read(p Place) (string, error) {
 func keys(p Place, ks ...string) {
 	switch p.Backend {
 	case "herdr":
-		run(p.Dir, "herdr", append([]string{"pane", "send-keys", p.Pane}, ks...)...)
+		p.herdr(p.Dir, append([]string{"pane", "send-keys", p.Pane}, ks...)...)
 	case "rex":
 		for _, k := range ks {
 			run(p.Dir, "rex", "send-key", "-s", p.Session, "-b", p.Pane, k)
@@ -398,7 +413,7 @@ type Project struct {
 
 // projects are the repositories the backend's terminals are in, each once: a worktree counts as the repository it
 // belongs to, and a folder outside git is left out (the form takes any other folder by its path).
-func projects(backend string) ([]Project, error) {
+func projects(backend, socket string) ([]Project, error) {
 	usePATH()
 	if backend == "" {
 		backend = shepherdBackend()
@@ -406,24 +421,25 @@ func projects(backend string) ([]Project, error) {
 	var dirs []string
 	switch backend {
 	case "herdr":
-		out, err := run("", "herdr", "workspace", "list")
+		// panes, not workspaces: herdr gives a workspace its worktree only when it saw one there, and leaves the rest
+		// (a workspace opened on a plain folder, then cd'd into a repo) without a repo_root
+		out, err := runOn(socket, "", "herdr", "pane", "list")
 		if err != nil {
 			return nil, err
 		}
 		var r struct {
 			Result struct {
-				Workspaces []struct {
-					Worktree struct {
-						RepoRoot string `json:"repo_root"`
-					} `json:"worktree"`
-				} `json:"workspaces"`
+				Panes []struct {
+					Cwd        string `json:"cwd"`
+					Foreground string `json:"foreground_cwd"`
+				} `json:"panes"`
 			} `json:"result"`
 		}
 		if err := json.Unmarshal([]byte(out), &r); err != nil {
 			return nil, err
 		}
-		for _, w := range r.Result.Workspaces {
-			dirs = append(dirs, w.Worktree.RepoRoot)
+		for _, p := range r.Result.Panes {
+			dirs = append(dirs, cmp.Or(p.Foreground, p.Cwd))
 		}
 	case "rex":
 		// ponytail: a session's folder is its first window's focused block's, as Shepherd names a Rex workspace;

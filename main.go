@@ -40,16 +40,19 @@ type Automation struct {
 	Timeout  int    `json:"timeout,omitempty"` // the precheck's, in seconds
 	// Grace is how many minutes late a scheduled run may still start: later than that, it is recorded as missed and
 	// the next is planned, so a laptop opened in the morning doesn't fire every run of the night. 0: 10.
-	Grace    int       `json:"grace,omitempty"`
-	Dir      string    `json:"dir"`
-	Worktree bool      `json:"worktree"`          // a new worktree per run, branched from Base
-	Base     string    `json:"base,omitempty"`    // empty: Dir's current branch
-	Agent    string    `json:"agent,omitempty"`   // claude (default) or codex
-	Backend  string    `json:"backend,omitempty"` // empty: the one Shepherd shows
-	NextRun  time.Time `json:"next_run,omitzero"`
-	LastRun  time.Time `json:"last_run,omitzero"`
-	Created  time.Time `json:"created"`
-	Updated  time.Time `json:"updated"`
+	Grace    int    `json:"grace,omitempty"`
+	Dir      string `json:"dir"`
+	Worktree bool   `json:"worktree"`          // a new worktree per run, branched from Base
+	Base     string `json:"base,omitempty"`    // empty: Dir's current branch
+	Agent    string `json:"agent,omitempty"`   // claude (default) or codex
+	Backend  string `json:"backend,omitempty"` // empty: the one Shepherd shows
+	// Socket is the API socket of the herdr session its project was picked in, where its runs open; empty: herdr's
+	// default session.
+	Socket  string    `json:"socket,omitempty"`
+	NextRun time.Time `json:"next_run,omitzero"`
+	LastRun time.Time `json:"last_run,omitzero"`
+	Created time.Time `json:"created"`
+	Updated time.Time `json:"updated"`
 }
 
 func (a Automation) agent() string {
@@ -163,8 +166,9 @@ func main() {
 
 	paddock.Command(app, "projects", "The repositories the backend's terminals are in (Shepherd's backend with no --backend)", func(_ *paddock.Ctx, in struct {
 		Backend string `json:"backend"`
+		Socket  string `json:"socket" help:"herdr: the API socket of the session; default: herdr's default session"`
 	}) ([]Project, error) {
-		return projects(in.Backend)
+		return projects(in.Backend, in.Socket)
 	})
 
 	// ponytail: paddock has no hook for the service's own work, so the scheduler starts when the binary is the
@@ -184,6 +188,7 @@ type saveInput struct {
 	Base     string   `json:"base" help:"the branch a worktree starts from; default: the folder's current one"`
 	Agent    string   `json:"agent" help:"claude (default) or codex"`
 	Backend  string   `json:"backend" help:"herdr, rex, hc or tmux; default: the one Shepherd shows"`
+	Socket   string   `json:"socket" help:"herdr: the API socket of the session its runs open in; default: herdr's default session"`
 	Kind     string   `json:"kind" help:"interval, daily, once or cron"`
 	Every    int      `json:"every" help:"interval: minutes between runs"`
 	At       string   `json:"at" help:"daily: HH:MM"`
@@ -403,7 +408,7 @@ func (s *store) save(in saveInput, now time.Time) (Automation, error) {
 	a := Automation{
 		ID: in.ID, Name: strings.TrimSpace(in.Name), Prompt: in.Prompt, Enabled: !in.Disabled, Schedule: sched,
 		Precheck: in.Precheck, Timeout: in.Timeout, Grace: in.Grace, Dir: in.Dir, Worktree: in.Worktree, Base: in.Base,
-		Agent: in.Agent, Backend: in.Backend, Created: now, Updated: now,
+		Agent: in.Agent, Backend: in.Backend, Socket: in.Socket, Created: now, Updated: now,
 	}
 	if a.Timeout == 0 {
 		a.Timeout = 60
