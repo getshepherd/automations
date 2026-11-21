@@ -405,6 +405,38 @@ func precheck(a Automation) (bool, string) {
 	return err == nil, text
 }
 
+// Session is one of herdr's sessions: its name and API socket.
+type Session struct {
+	Name    string `json:"name"`
+	Socket  string `json:"socket"`
+	Default bool   `json:"default"`
+	Running bool   `json:"running"`
+}
+
+// sessions lists herdr's sessions, stopped ones too (the form marks them).
+func sessions() ([]Session, error) {
+	usePATH()
+	out, err := run("", "herdr", "session", "list", "--json")
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		Sessions []struct {
+			Session
+			Socket string `json:"socket_path"`
+		} `json:"sessions"`
+	}
+	if err := json.Unmarshal([]byte(out), &r); err != nil {
+		return nil, err
+	}
+	l := make([]Session, len(r.Sessions))
+	for i, s := range r.Sessions {
+		l[i] = s.Session
+		l[i].Socket = s.Socket
+	}
+	return l, nil
+}
+
 // Project is a repository one of the backend's terminals is in, for the form's project picker.
 type Project struct {
 	Name string `json:"name"`

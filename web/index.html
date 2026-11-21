@@ -70,6 +70,8 @@
     .examples { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
     .examples > span { margin-right: 4px; }
     .prompt textarea { flex: 1; min-height: 160px; padding: 12px 14px; resize: none; line-height: 1.6; }
+    /* backend and session side by side; with no session the backend takes the row */
+    .pair { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
     .labelrow { display: flex; align-items: center; gap: 8px; }
     .labelrow > :first-child { flex: 1; }
     .labelrow select { width: auto; height: 24px; font-size: 12px; }
@@ -123,14 +125,19 @@
         <div class="examples" id="examples"><span class="caps">Start from</span></div>
       </div>
       <div class="side">
-        <select name="agent" aria-label="Agent"><option value="">Claude Code</option><option value="codex">Codex</option></select>
-        <label class="field"><span>Backend</span>
-          <select name="backend"><option value="" id="backend-default">Shepherd's</option><option value="herdr">herdr</option><option value="rex">Rex</option><option value="hc">hc</option><option value="tmux">tmux</option></select>
-          <small>Where its terminal opens.</small></label>
+        <label class="field"><span>Agent</span>
+          <select name="agent"><option value="">Claude Code</option><option value="codex">Codex</option></select></label>
+        <div class="field">
+          <div class="pair">
+            <label class="field"><span>Backend</span>
+              <select name="backend"><option value="" id="backend-default">Shepherd's</option><option value="herdr">herdr</option><option value="rex">Rex</option><option value="hc">hc</option><option value="tmux">tmux</option></select></label>
+            <label class="field" id="session-field"><span>Session</span>
+              <select name="socket"></select></label>
+          </div>
+          <small id="where-hint"></small></div>
         <div class="field"><label class="caps" for="project">Project</label>
           <select name="project" id="project" required></select>
           <input name="dir" autocomplete="off" placeholder="~/Developer/project" aria-label="Folder" hidden>
-          <input name="socket" type="hidden">
           <small id="project-hint"></small></div>
         <div class="field" role="group" aria-labelledby="ws-label"><span id="ws-label">Workspace</span>
           <div class="segments">
@@ -244,7 +251,7 @@
         el('td', { className: 'chev' }, icon('alt-arrow-right')),
         cell(a.name),
         cell(describe(a.schedule), 'sched'),
-        cell(`${a.worktree ? 'worktree of ' : ''}${folder(a.dir)}`, 'where muted', `${a.worktree ? 'A new worktree of ' : ''}${a.dir}`),
+        cell(`${a.worktree ? 'worktree of ' : ''}${folder(a.dir)}${a.socket ? ` · ${sessionName(a.socket)}` : ''}`, 'where muted', `${a.worktree ? 'A new worktree of ' : ''}${a.dir}`),
         cell(a.enabled && a.next_run ? soon(a.next_run) : '—', 'next muted', a.enabled && a.next_run ? when(a.next_run) : 'Off'),
         el('td', { className: 'act' }, runNow, edit, toggle));
       const history = el('tr', { className: 'history' }, el('td', { colSpan: 6 }));
@@ -292,15 +299,19 @@
     F.dir.required = other;
     if (F.project.value && !other) F.dir.value = F.project.value;
     const herdr = (F.backend.value || shown) === 'herdr';
-    // a session's socket is <herdr's folder>/sessions/<name>/herdr.sock; the default one's lies in herdr's folder itself
-    const session = F.socket.value.match(/\/sessions\/([^/]+)\/[^/]+$/)?.[1] ?? 'default';
-    $('#project-hint').textContent = $('#project-hint').dataset.error || [other ? '' : F.project.value, herdr ? `In herdr's ${session} session.` : ''].filter(Boolean).join(' ');
+    $('#session-field').hidden = !herdr;
+    const opt = F.socket.selectedOptions[0];
+    const name = { herdr: 'herdr', rex: 'Rex', hc: 'hc', tmux: 'tmux' }[F.backend.value || shown];
+    $('#where-hint').textContent = herdr && opt ? `Its terminal opens in herdr's ${opt.textContent.replace(/ \(stopped\)$/, '')} session.` : `Its terminal opens in ${name}.`;
+    $('#project-hint').textContent = $('#project-hint').dataset.error || (other ? '' : F.project.value);
     const worktree = F.workspace.value === 'worktree';
     F.base.hidden = !worktree;
     $('#ws-hint').textContent = worktree ? `A new worktree each run, branched from ${F.base.value.trim() || "the folder's current branch"}.` : 'Each run in the project folder itself.';
   };
   form.addEventListener('change', show);
   F.base.oninput = show;
+  // a session's socket is <herdr's folder>/sessions/<name>/herdr.sock
+  const sessionName = (socket) => socket.match(/\/sessions\/([^/]+)\/[^/]+$/)?.[1] ?? socket;
   // a value set elsewhere (the CLI) that the list lacks gets an option of its own
   const pick = (select, v, label) => {
     if (![...select.options].some((o) => o.value === String(v))) select.append(el('option', { value: v }, label));
@@ -309,8 +320,8 @@
 
   // the picker lists the repositories the backend's terminals are in; a folder of the automation's that isn't one of
   // them, or any other, is "Other folder…" with its path
-  // On herdr they are the projects of a session: a new automation's, the one Shepherd shows (`window.shepherd`), an
-  // automation's, the one it was made in. Its runs open there.
+  // On herdr they are the projects of the session picked: for a new automation the one Shepherd shows
+  // (`window.shepherd`) to start with. Its runs open there.
   async function projects(dir) {
     const backend = F.backend.value;
     const socket = F.socket.value;
@@ -327,7 +338,19 @@
     F.dir.value = dir;
     show();
   }
-  F.backend.addEventListener('change', () => projects(F.project.value === 'other' || !F.project.value ? F.dir.value : F.project.value));
+  const relist = () => projects(F.project.value === 'other' || !F.project.value ? F.dir.value : F.project.value);
+  F.backend.addEventListener('change', relist);
+  F.socket.addEventListener('change', relist);
+
+  // herdr's sessions; "" is the default one, so an automation that names none keeps its meaning
+  async function sessions(socket) {
+    let list = [];
+    try { list = await call('sessions', {}); } catch {}
+    F.socket.replaceChildren(...list.map((s) => el('option', { value: s.default ? '' : s.socket, title: s.socket }, s.name + (s.running ? '' : ' (stopped)'))));
+    if (!list.some((s) => s.default)) F.socket.prepend(el('option', { value: '' }, 'default'));
+    const def = list.find((s) => s.default)?.socket;
+    pick(F.socket, socket === def ? '' : socket, sessionName(socket));
+  }
 
   // examples a run is worth its tokens for: each names the commands it starts from, says what not to touch and what
   // to end with, and has a precheck where a run has nothing to do most days
@@ -370,14 +393,14 @@ Build and run the tests after each group of updates, and drop an update that bre
     } }, x.name));
   }
 
-  function open(a) {
+  async function open(a) {
     form.reset();
     $('#edit-title').textContent = a ? 'Edit automation' : 'Create automation';
     $('#save').textContent = a ? 'Save' : 'Create';
     $('#delete').hidden = !a;
     $('#examples').hidden = !!a;
     F.id.value = '';
-    F.socket.value = a ? a.socket ?? '' : window.shepherd?.session?.socket ?? '';
+    await sessions(a ? a.socket ?? '' : window.shepherd?.session?.socket ?? '');
     if (a) {
       for (const k of ['id', 'name', 'prompt', 'dir', 'base', 'agent', 'backend', 'precheck']) F[k].value = a[k] ?? '';
       F.workspace.value = a.worktree ? 'worktree' : 'folder';
@@ -396,6 +419,7 @@ Build and run the tests after each group of updates, and drop an update that bre
     projects(a?.dir ?? '');
     show();
     $('#edit').showModal();
+    F.name.focus();
     $('.main').scrollTop = $('.side').scrollTop = 0;
   }
 
@@ -440,7 +464,8 @@ Build and run the tests after each group of updates, and drop an update that bre
   call('backend').then((b) => {
     shown = b;
     $('#backend').textContent = `Runs go to ${b}, the backend Shepherd shows, unless an automation names another.`;
-    $('#backend-default').textContent = `Shepherd's (${b})`;
+    $('#backend-default').title = `Shepherd's: ${b}`;
+    show();
   }).catch(() => {});
   on('changed', () => load().catch(fail));
   // #new opens an empty form, #edit the first automation's: links to the form, and how its screenshots are taken

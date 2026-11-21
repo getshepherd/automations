@@ -164,6 +164,10 @@ func main() {
 		return shepherdBackend(), nil
 	})
 
+	paddock.Command(app, "sessions", "herdr's sessions, for the form's session picker", func(_ *paddock.Ctx, _ struct{}) ([]Session, error) {
+		return sessions()
+	})
+
 	paddock.Command(app, "projects", "The repositories the backend's terminals are in (Shepherd's backend with no --backend)", func(_ *paddock.Ctx, in struct {
 		Backend string `json:"backend"`
 		Socket  string `json:"socket" help:"herdr: the API socket of the session; default: herdr's default session"`
