@@ -322,15 +322,19 @@
   // them, or any other, is "Other folder…" with its path
   // On herdr they are the projects of the session picked: for a new automation the one Shepherd shows
   // (`window.shepherd`) to start with. Its runs open there.
+  let listing = 0; // the last list asked for: a slower answer to an earlier one is dropped
   async function projects(dir) {
+    const asked = ++listing;
     const backend = F.backend.value;
     const socket = F.socket.value;
     const hint = $('#project-hint');
     F.project.replaceChildren(el('option', { value: '', disabled: true }, 'Loading projects…'));
     let list = [];
     delete hint.dataset.error;
-    try { list = await call('projects', { backend, socket }); } catch (e) { hint.dataset.error = e.message; }
-    if (F.backend.value !== backend) return; // changed again while this one listed
+    let error;
+    try { list = await call('projects', { backend, socket }); } catch (e) { error = e.message; }
+    if (asked !== listing) return; // backend, session or automation changed while this one listed
+    if (error) hint.dataset.error = error;
     F.project.replaceChildren(el('option', { value: '', disabled: true }, list.length ? 'Choose a project' : hint.dataset.error ? "Couldn't list projects" : 'No projects open'),
       ...list.map((p) => el('option', { value: p.dir, title: p.dir }, p.name)), el('option', { value: 'other' }, 'Other folder…'));
     const match = dir && list.find((p) => p.dir === dir || (dir.startsWith('~/') && p.dir.endsWith(dir.slice(1))));
